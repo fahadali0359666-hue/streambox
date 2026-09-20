@@ -6,7 +6,7 @@ import type {
 } from './types';
 
 export const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
+  import.meta.env.VITE_API_BASE_URL || ''
 ).replace(/\/$/, '');
 
 async function get<T>(path: string): Promise<T> {
