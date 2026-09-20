@@ -1,8 +1,12 @@
+import { adminDashboard, isAdmin, makeSession, providerRuntime, providerSummaries, saveProvider } from './admin';
+import { ADMIN_HTML } from './admin-ui';
+
 export interface Env {
   DB: D1Database;
   TMDB_READ_TOKEN: string;
   WATCHMODE_API_KEY?: string;
   ADMIN_TOKEN?: string;
+  CONFIG_ENCRYPTION_KEY?: string;
   MUX_TOKEN_ID?: string;
   MUX_TOKEN_SECRET?: string;
   ALLOWED_ORIGIN?: string;
@@ -78,9 +82,10 @@ async function tmdb(
   path: string,
   params: Record<string, string> = {},
 ) {
-  if (!env.TMDB_READ_TOKEN) {
-    throw new Error('TMDB_READ_TOKEN is not configured');
-  }
+  const provider = await providerRuntime(env, 'tmdb');
+  if (!provider.enabled) throw new Error('TMDB provider is disabled');
+  const token = String(provider.config?.readToken || '');
+  if (!token) throw new Error('TMDB token is not configured');
   const url = new URL(`${TMDB}${path}`);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
@@ -90,7 +95,7 @@ async function tmdb(
     url.toString(),
     {
       headers: {
-        Authorization: `Bearer ${env.TMDB_READ_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         accept: 'application/json',
       },
     },
@@ -103,12 +108,13 @@ async function watchmodeByTmdb(
   tmdbId: string,
   region: string,
 ) {
-  if (!env.WATCHMODE_API_KEY) {
-    return { available: false, sources: [] };
-  }
+  const provider = await providerRuntime(env, 'watchmode');
+  if (!provider.enabled) return { available: false, sources: [] };
+  const apiKey = String(provider.config?.apiKey || '');
+  if (!apiKey) return { available: false, sources: [] };
 
   const search = new URL(`${WATCHMODE}/search/`);
-  search.searchParams.set('apiKey', env.WATCHMODE_API_KEY);
+  search.searchParams.set('apiKey', apiKey);
   search.searchParams.set('search_field', 'tmdb_id');
   search.searchParams.set('search_value', tmdbId);
 
@@ -119,7 +125,7 @@ async function watchmodeByTmdb(
   }
 
   const sources = new URL(`${WATCHMODE}/title/${hit.id}/sources/`);
-  sources.searchParams.set('apiKey', env.WATCHMODE_API_KEY);
+  sources.searchParams.set('apiKey', apiKey);
   if (region) sources.searchParams.set('regions', region.toUpperCase());
 
   const result = await fetchJson(sources.toString(), undefined, 900);
@@ -155,6 +161,14 @@ async function playbackFor(env: Env, catalogId: string) {
     return { available: false, reason: 'Rights not cleared' };
   }
 
+  const playbackProvider = await providerRuntime(
+    env,
+    row.source_type === 'mux' ? 'mux' : 'direct',
+  );
+  if (!playbackProvider.enabled) {
+    return { available: false, reason: 'Playback provider is disabled' };
+  }
+
   if (row.source_type === 'mux' && row.playback_id) {
     return {
       available: true,
@@ -176,11 +190,6 @@ async function playbackFor(env: Env, catalogId: string) {
   }
 
   return { available: false, reason: 'Stream record is incomplete' };
-}
-
-function isAdmin(request: Request, env: Env) {
-  if (!env.ADMIN_TOKEN) return false;
-  return request.headers.get('authorization') === `Bearer ${env.ADMIN_TOKEN}`;
 }
 
 function archiveRights(metadata: any) {
@@ -211,7 +220,9 @@ function chooseArchiveVideo(files: any[]) {
   return candidates[0];
 }
 
-async function handleArchiveSearch(url: URL) {
+async function handleArchiveSearch(env: Env, url: URL) {
+  const provider = await providerRuntime(env, 'internet_archive');
+  if (!provider.enabled) throw new Error('Internet Archive provider is disabled');
   const query = (url.searchParams.get('q') || '').trim();
   if (!query) return { results: [] };
 
@@ -239,7 +250,9 @@ async function handleArchiveSearch(url: URL) {
   return { results: data?.response?.docs || [] };
 }
 
-async function handleArchiveStream(identifier: string) {
+async function handleArchiveStream(env: Env, identifier: string) {
+  const provider = await providerRuntime(env, 'internet_archive');
+  if (!provider.enabled) throw new Error('Internet Archive provider is disabled');
   const metadata = await fetchJson(
     `${ARCHIVE}/metadata/${encodeURIComponent(identifier)}`,
     undefined,
@@ -301,7 +314,11 @@ async function handleArchiveStream(identifier: string) {
 }
 
 async function createMuxAsset(env: Env, body: any) {
-  if (!env.MUX_TOKEN_ID || !env.MUX_TOKEN_SECRET) {
+  const provider = await providerRuntime(env, 'mux');
+  if (!provider.enabled) throw new Error('Mux provider is disabled');
+  const tokenId = String(provider.config?.tokenId || '');
+  const tokenSecret = String(provider.config?.tokenSecret || '');
+  if (!tokenId || !tokenSecret) {
     throw new Error('Mux credentials are not configured');
   }
   if (!body?.inputUrl || !body?.catalogId || !body?.title) {
@@ -314,7 +331,7 @@ async function createMuxAsset(env: Env, body: any) {
     throw new Error('licenseSource and licenseReference are required');
   }
 
-  const auth = btoa(`${env.MUX_TOKEN_ID}:${env.MUX_TOKEN_SECRET}`);
+  const auth = btoa(`${tokenId}:${tokenSecret}`);
   const asset = await fetchJson(
     'https://api.mux.com/video/v1/assets',
     {
@@ -382,18 +399,76 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean);
 
     try {
+      if (request.method === 'GET' && url.pathname === '/admin') {
+        return new Response(ADMIN_HTML, {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-frame-options': 'DENY',
+          },
+        });
+      }
+
+      if (request.method === 'POST' && url.pathname === '/v1/admin/session') {
+        const body: any = await request.json();
+        if (!env.ADMIN_TOKEN || body?.token !== env.ADMIN_TOKEN) {
+          return json({ error: 'Invalid admin token' }, 401, env);
+        }
+        const session = await makeSession(env);
+        return new Response(JSON.stringify({ ok: true, expiresAt: session.expires }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'set-cookie': `streambox_admin=${session.value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200`,
+            'cache-control': 'no-store',
+          },
+        });
+      }
+
+      if (request.method === 'DELETE' && url.pathname === '/v1/admin/session') {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'set-cookie': 'streambox_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0',
+            'cache-control': 'no-store',
+          },
+        });
+      }
+
+      if (request.method === 'GET' && url.pathname === '/v1/admin/dashboard') {
+        if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401, env);
+        return json(await adminDashboard(env), 200, env);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/v1/admin/providers') {
+        if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401, env);
+        return json({ providers: await providerSummaries(env) }, 200, env);
+      }
+
+      if (
+        request.method === 'PUT' &&
+        parts[0] === 'v1' &&
+        parts[1] === 'admin' &&
+        parts[2] === 'providers' &&
+        parts[3]
+      ) {
+        if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401, env);
+        const providers = await saveProvider(env, parts[3], await request.json());
+        return json({ providers }, 200, env);
+      }
+
       if (request.method === 'GET' && url.pathname === '/health') {
         return json(
           {
             ok: true,
             service: 'streambox-api',
-            providers: {
-              tmdb: !!env.TMDB_READ_TOKEN,
-              watchmode: !!env.WATCHMODE_API_KEY,
-              mux: !!(env.MUX_TOKEN_ID && env.MUX_TOKEN_SECRET),
-              filmhub: 'licensing-workflow',
-              vuulr: 'licensing-workflow',
-            },
+            providers: Object.fromEntries(
+              (await providerSummaries(env)).map((provider) => [
+                provider.id,
+                { enabled: provider.enabled, configured: provider.secretConfigured },
+              ]),
+            ),
           },
           200,
           env,
@@ -462,7 +537,7 @@ export default {
             append_to_response: 'videos,recommendations,external_ids',
           }),
           watchmodeByTmdb(env, id, region).catch(() => ({
-            available: !!env.WATCHMODE_API_KEY,
+            available: false,
             sources: [],
           })),
           playbackFor(env, `tmdb:${type}:${id}`),
@@ -497,7 +572,7 @@ export default {
         request.method === 'GET' &&
         url.pathname === '/v1/archive/search'
       ) {
-        return json(await handleArchiveSearch(url), 200, env);
+        return json(await handleArchiveSearch(env, url), 200, env);
       }
 
       if (
@@ -508,7 +583,7 @@ export default {
         parts[3] === 'stream'
       ) {
         return json(
-          await handleArchiveStream(decodeURIComponent(parts[2])),
+          await handleArchiveStream(env, decodeURIComponent(parts[2])),
           200,
           env,
         );
@@ -518,7 +593,7 @@ export default {
         request.method === 'POST' &&
         url.pathname === '/v1/admin/licenses'
       ) {
-        if (!isAdmin(request, env)) {
+        if (!(await isAdmin(request, env))) {
           return json({ error: 'Unauthorized' }, 401, env);
         }
 
@@ -564,7 +639,7 @@ export default {
         request.method === 'POST' &&
         url.pathname === '/v1/admin/mux/assets'
       ) {
-        if (!isAdmin(request, env)) {
+        if (!(await isAdmin(request, env))) {
           return json({ error: 'Unauthorized' }, 401, env);
         }
         return json(
@@ -578,7 +653,7 @@ export default {
         request.method === 'POST' &&
         url.pathname === '/v1/admin/streams/direct'
       ) {
-        if (!isAdmin(request, env)) {
+        if (!(await isAdmin(request, env))) {
           return json({ error: 'Unauthorized' }, 401, env);
         }
 
