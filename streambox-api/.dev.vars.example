@@ -1,0 +1,6 @@
+TMDB_READ_TOKEN=replace_me
+WATCHMODE_API_KEY=replace_me
+ADMIN_TOKEN=replace_with_long_random_value
+MUX_TOKEN_ID=replace_me
+MUX_TOKEN_SECRET=replace_me
+ALLOWED_ORIGIN=http://localhost:5173
