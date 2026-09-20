@@ -1,5 +1,6 @@
 import { adminDashboard, isAdmin, makeSession, providerRuntime, providerSummaries, saveProvider, testProvider } from './admin';
 import { ADMIN_HTML } from './admin-ui';
+import { ensureSchema } from './schema';
 
 export interface Env {
   DB: D1Database;
@@ -399,6 +400,7 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean);
 
     try {
+      // The /admin shell can render before DB access; all API routes self-initialize D1.
       if (request.method === 'GET' && url.pathname === '/admin') {
         return new Response(ADMIN_HTML, {
           headers: {
@@ -434,6 +436,10 @@ export default {
             'cache-control': 'no-store',
           },
         });
+      }
+
+      if (url.pathname.startsWith('/v1/') || url.pathname === '/health') {
+        await ensureSchema(env.DB);
       }
 
       if (request.method === 'GET' && url.pathname === '/v1/admin/dashboard') {
