@@ -1,0 +1,12 @@
+{
+  "name": "streambox-platform",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "npm --prefix streambox-client install && npm --prefix streambox-client run build",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.38.0"
+  }
+}
