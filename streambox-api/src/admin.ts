@@ -156,6 +156,64 @@ export async function isAdmin(request: Request, env: AdminEnv) {
   return signature === await sign(env, 'admin:' + expires);
 }
 
+export async function testProvider(env: AdminEnv, id: string) {
+  const runtime = await providerRuntime(env, id as ProviderId);
+  if (!runtime.enabled) return { ok: false, message: 'Provider is disabled' };
+
+  if (id === 'tmdb') {
+    const token = String((runtime.config as any)?.readToken || '');
+    if (!token) return { ok: false, message: 'TMDB token is not configured' };
+    const response = await fetch('https://api.themoviedb.org/3/configuration', {
+      headers: { Authorization: 'Bearer ' + token, accept: 'application/json' },
+    });
+    if (!response.ok) return { ok: false, message: 'TMDB rejected the token (' + response.status + ')' };
+    return { ok: true, message: 'TMDB connection successful' };
+  }
+
+  if (id === 'watchmode') {
+    const apiKey = String((runtime.config as any)?.apiKey || '');
+    if (!apiKey) return { ok: false, message: 'Watchmode API key is not configured' };
+    const url = new URL('https://api.watchmode.com/v1/search/');
+    url.searchParams.set('apiKey', apiKey);
+    url.searchParams.set('search_field', 'name');
+    url.searchParams.set('search_value', 'Avatar');
+    const response = await fetch(url.toString());
+    if (!response.ok) return { ok: false, message: 'Watchmode rejected the key (' + response.status + ')' };
+    return { ok: true, message: 'Watchmode connection successful' };
+  }
+
+  if (id === 'internet_archive') {
+    const response = await fetch('https://archive.org/advancedsearch.php?q=mediatype%3Amovies&rows=1&output=json');
+    if (!response.ok) return { ok: false, message: 'Internet Archive request failed (' + response.status + ')' };
+    return { ok: true, message: 'Internet Archive connection successful' };
+  }
+
+  if (id === 'mux') {
+    const tokenId = String((runtime.config as any)?.tokenId || '');
+    const tokenSecret = String((runtime.config as any)?.tokenSecret || '');
+    if (!tokenId || !tokenSecret) return { ok: false, message: 'Mux Token ID / Secret are not configured' };
+    const response = await fetch('https://api.mux.com/video/v1/assets?limit=1', {
+      headers: { Authorization: 'Basic ' + btoa(tokenId + ':' + tokenSecret) },
+    });
+    if (!response.ok) return { ok: false, message: 'Mux rejected the credentials (' + response.status + ')' };
+    return { ok: true, message: 'Mux connection successful' };
+  }
+
+  if (id === 'filmhub') {
+    return { ok: true, message: 'Filmhub is configured as a licensing workflow. Add licensed deal/reference records below.' };
+  }
+
+  if (id === 'vuulr') {
+    return { ok: true, message: 'Vuulr is configured as a licensing workflow. Add licensed deal/reference records below.' };
+  }
+
+  if (id === 'direct') {
+    return { ok: true, message: 'Direct Streams is ready. Add an authorized HLS/MP4 source below.' };
+  }
+
+  return { ok: false, message: 'Unsupported provider' };
+}
+
 export async function adminDashboard(env: AdminEnv) {
   const [streams, licenses, streamCount, licenseCount, providers] = await Promise.all([
     env.DB.prepare(`SELECT catalog_id,title,source_type,rights_status,license_source,license_reference,territory,starts_at,ends_at,updated_at FROM streams ORDER BY updated_at DESC LIMIT 100`).all(),
