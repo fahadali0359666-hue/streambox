@@ -2,6 +2,12 @@
 
 Backend for the StreamBox web/Android client.
 
+## Admin panel
+
+After deployment open `/admin` on the API Worker URL. Login with `ADMIN_TOKEN`. The panel manages TMDB, Watchmode, Internet Archive, Mux, Filmhub, Vuulr and Direct Streams, plus license records and authorized stream registration.
+
+Provider credentials saved in the admin panel are AES-GCM encrypted before being stored in D1. Set a separate `CONFIG_ENCRYPTION_KEY` Worker secret and keep it stable; changing it makes previously encrypted provider settings unreadable.
+
 ## Providers
 
 - **TMDB** — catalog, trending, search, artwork, movie/TV details.
@@ -28,6 +34,7 @@ Backend for the StreamBox web/Android client.
    npx wrangler secret put TMDB_READ_TOKEN
    npx wrangler secret put WATCHMODE_API_KEY
    npx wrangler secret put ADMIN_TOKEN
+   npx wrangler secret put CONFIG_ENCRYPTION_KEY
    npx wrangler secret put MUX_TOKEN_ID
    npx wrangler secret put MUX_TOKEN_SECRET
    npx wrangler secret put ALLOWED_ORIGIN
