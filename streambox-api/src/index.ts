@@ -411,6 +411,14 @@ export default {
         });
       }
 
+      if (request.method === 'GET' && url.pathname === '/v1/admin/bootstrap-status') {
+        return json({
+          adminTokenConfigured: !!env.ADMIN_TOKEN,
+          encryptionKeyConfigured: !!env.CONFIG_ENCRYPTION_KEY,
+          dbBound: !!env.DB,
+        }, 200, env);
+      }
+
       if (request.method === 'POST' && url.pathname === '/v1/admin/session') {
         const body: any = await request.json();
         if (!env.ADMIN_TOKEN || body?.token !== env.ADMIN_TOKEN) {
