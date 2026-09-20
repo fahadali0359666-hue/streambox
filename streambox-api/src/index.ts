@@ -1,4 +1,4 @@
-import { adminDashboard, isAdmin, makeSession, providerRuntime, providerSummaries, saveProvider } from './admin';
+import { adminDashboard, isAdmin, makeSession, providerRuntime, providerSummaries, saveProvider, testProvider } from './admin';
 import { ADMIN_HTML } from './admin-ui';
 
 export interface Env {
@@ -456,6 +456,18 @@ export default {
         if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401, env);
         const providers = await saveProvider(env, parts[3], await request.json());
         return json({ providers }, 200, env);
+      }
+
+      if (
+        request.method === 'POST' &&
+        parts[0] === 'v1' &&
+        parts[1] === 'admin' &&
+        parts[2] === 'providers' &&
+        parts[3] &&
+        parts[4] === 'test'
+      ) {
+        if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401, env);
+        return json(await testProvider(env, parts[3]), 200, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/health') {
