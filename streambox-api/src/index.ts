@@ -36,7 +36,7 @@ function json(data: unknown, status = 200, env?: Env) {
 }
 
 async function fetchJson(url: string, init?: RequestInit, ttl = 300): Promise<any> {
-  const cache = caches.default;
+  const cache = await caches.open('streambox-api');
   const request = new Request(url, init);
   const method = init?.method || 'GET';
 
